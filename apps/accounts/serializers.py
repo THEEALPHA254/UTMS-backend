@@ -1,8 +1,17 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import StudentProfile, DriverProfile
+from rest_framework import serializers
+from .models import *
 
-User = get_user_model()
+class LoginSerializer(serializers.Serializer):
+    email    = serializers.EmailField()
+    password = serializers.CharField()
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = User
+        fields = '__all__'
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
@@ -16,6 +25,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 
 
 class StudentSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True) 
+
     class Meta:
         model = StudentProfile
         fields = '__all__'

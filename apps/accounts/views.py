@@ -8,58 +8,98 @@ from .serializers import *
 from .models import *
 from rest_framework.decorators import api_view
 from rest_framework.decorators import authentication_classes, permission_classes
+from rest_framework.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
+from django.contrib.auth import authenticate
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Q
 
-User = get_user_model()
 
 
-class RegisterStudentView(generics.CreateAPIView):
-    """Student self-registration endpoint."""
-    serializer_class = RegisterStudentSerializer
-    permission_classes = [permissions.AllowAny]
+class StudentPagination(PageNumberPagination):
+    page_size = 15
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        tokens = self._get_tokens(user)
+    def get_paginated_response(self, data):
         return Response({
-            'message': 'Registration successful.',
-            'user': UserSerializer(user).data,
-            **tokens
-        }, status=status.HTTP_201_CREATED)
+            'success': True,
+            'count':    self.page.paginator.count,
+            'next':     self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'results':  data,               # ✅ frontend reads data.results
+        })
 
-    def _get_tokens(self, user):
-        refresh = RefreshToken.for_user(user)
-        return {
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
+
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([])
+def login_view(request):
+    serializer = LoginSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response({'success': False, 'errors': serializer.errors},
+                        status=HTTP_400_BAD_REQUEST)
+
+    email    = serializer.validated_data['email']
+    password = serializer.validated_data['password']
+
+    user = authenticate(request, username=email, password=password)
+
+    if user is None:
+        return Response({
+            'success': False,
+            'message': 'Invalid email or password.'
+        }, status=HTTP_400_BAD_REQUEST)
+
+    refresh = RefreshToken.for_user(user)
+
+    return Response({
+        'success': True,
+        'data': {
+            'user_id':    user.id,
+            'email':      user.email,
+            'first_name': user.first_name,
+            'last_name':  user.last_name,
+            'role':       user.role,
+            'access':     str(refresh.access_token),
+            'refresh':    str(refresh),
         }
+    }, status=HTTP_200_OK)
 
 
-class CurrentUserView(generics.RetrieveUpdateAPIView):
-    """Get or update the currently authenticated user."""
-    serializer_class = UserSerializer
 
-    def get_object(self):
-        return self.request.user
+@api_view(['GET'])
+def studentList(request):
+    search = request.query_params.get('search', None)
+    transport_status = request.query_params.get('transport_status', None)
+    is_active = request.query_params.get('is_active', None)
+
+    students = StudentProfile.objects.select_related('user').all().order_by('id')
+
+    # ── Filters ──────────────────────────────────────────
+    if search:
+        students = students.filter(
+            Q(user__first_name__icontains=search) |
+            Q(user__last_name__icontains=search)  |
+            Q(user__email__icontains=search)       |
+            Q(admission_number__icontains=search)
+        )
+
+    if transport_status:
+        students = students.filter(transport_status=transport_status)
+
+    if is_active is not None:
+        is_active_bool = is_active.lower() == 'true'
+        students = students.filter(user__is_active=is_active_bool)
+
+    # ── Paginate ──────────────────────────────────────────
+    paginator = StudentPagination()
+    page = paginator.paginate_queryset(students, request)
+    serializer = StudentSerializer(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
 
 
-class ChangePasswordView(APIView):
-    def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        request.user.set_password(serializer.validated_data['new_password'])
-        request.user.save()
-        return Response({'message': 'Password updated successfully.'})
-
-
-class StudentListView(generics.ListAPIView):
-    """Admin: list all students."""
-    serializer_class = UserSerializer
-    permission_classes = [permissions.IsAdminUser]
-    queryset = User.objects.filter(role='student').select_related('student_profile')
-    search_fields = ['email', 'first_name', 'last_name', 'student_profile__admission_number']
-    filterset_fields = ['is_active', 'student_profile__transport_status']
 
 @api_view(["POST"])
 @authentication_classes([])
