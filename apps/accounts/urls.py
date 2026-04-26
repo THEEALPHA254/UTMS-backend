@@ -12,7 +12,7 @@ urlpatterns = [
     path('me/', CurrentUserView.as_view(), name='current-user'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     # Admin: students
-    # path('students/', views.StudentListView.as_view(), name='student-list'),
+    path('students/', StudentListView.as_view(), name='student-list'),
     path('students/create/', create_students, name='create_students'),
     path('students/<int:pk>/', StudentDetailView.as_view(), name='student-detail'),
     path('students/profiles/<int:pk>/status/', UpdateTransportStatusView.as_view(), name='transport-status'),
