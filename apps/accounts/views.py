@@ -15,7 +15,7 @@ from django.db.models import Q
 
 
 
-class StudentPagination(PageNumberPagination):
+class Pagination(PageNumberPagination):
     page_size = 15
     page_size_query_param = 'page_size'
     max_page_size = 100
@@ -68,6 +68,84 @@ def login_view(request):
     }, status=HTTP_200_OK)
 
 
+# create users
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([])
+def create_users(request):
+    serializer = UserSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        response_data = {
+            "success": True,
+            "message": "User created successfully",
+            "data": serializer.data,
+        }
+        return Response(response_data, status=status.HTTP_201_CREATED)
+    response_data = {
+        "success": False,
+        "message": "User creation failed",
+        "data": serializer.errors,
+    }
+    return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+
+# get all users
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([])
+def all_users(request):
+    users = User.objects.all()
+    serializer = UserSerializer(users, many=True)
+    response_data = {
+        "success": True,
+        "message": "Clients retrieved successfully",
+        "data": serializer.data,
+    }
+    return Response(response_data, status=status.HTTP_200_OK)
+
+@api_view(["GET", "PUT", "DELETE"])
+def user_detail(request, pk):
+    try:
+        user = User.objects.get(pk=pk)
+    except User.DoesNotExist:
+        response_data = {
+            "success": False,
+            "message": "User not found",
+        }
+        return Response(response_data, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        serializer = UserSerializer(user)
+        response_data = {
+            "success": True,
+            "message": "Client retrieved successfully",
+            "data": serializer.data,
+        }
+        return Response(response_data)
+    elif request.method == "PUT":
+        serializer = UserSerializer(user, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            response_data = {
+                "success": True,
+                "message": "User updated successfully",
+                "data": serializer.data,
+            }
+            return Response(response_data)
+        response_data = {
+            "success": False,
+            "message": "User update failed",
+            "data": serializer.errors,
+        }
+        return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+    elif request.method == "DELETE":
+        user.delete()
+        response_data = {
+            "success": True,
+            "message": "User deleted successfully",
+        }
+        return Response(response_data, status=status.HTTP_204_NO_CONTENT)
+
 
 @api_view(['GET'])
 def studentList(request):
@@ -94,7 +172,7 @@ def studentList(request):
         students = students.filter(user__is_active=is_active_bool)
 
     # ── Paginate ──────────────────────────────────────────
-    paginator = StudentPagination()
+    paginator = Pagination()
     page = paginator.paginate_queryset(students, request)
     serializer = StudentSerializer(page, many=True)
     return paginator.get_paginated_response(serializer.data)
@@ -121,36 +199,51 @@ def create_students(request):
     }
     return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
 
-class StudentDetailView(generics.RetrieveUpdateAPIView):
-    """Admin: retrieve or update a student."""
-    serializer_class = UserSerializer
-    permission_classes = [permissions.IsAdminUser]
-    queryset = User.objects.filter(role='student').select_related('student_profile')
+
+@api_view(["GET", "PUT", "DELETE"])
+@authentication_classes([])
+@permission_classes([])
+def student_detail(request, pk):
+    try:
+        student = StudentProfile.objects.get(pk=pk)
+    except StudentProfile.DoesNotExist:
+        response_data = {
+            "success": False,
+            "message": "Student Not found",
+        }
+        return Response(response_data, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == "GET":
+        serializer = StudentSerializer(student)
+        response_data = {
+            "success": True,
+            "message": "Student retrieved successfully",
+            "data": serializer.data,
+        }
+        return Response(response_data)
+    elif request.method == "PUT":
+        serializer = StudentSerializer(student, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            response_data = {
+                "success": True,
+                "message": "Student updated successfully",
+                "data": serializer.data,
+            }
+            return Response(response_data)
+        response_data = {
+            "success": False,
+            "message": "Student update failed",
+            "data": serializer.errors,
+        }
+        return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+    elif request.method == "DELETE":
+        student.delete()
+        response_data = {
+            "success": True,
+            "message": "Student deleted successfully",
+        }
+        return Response(response_data, status=status.HTTP_204_NO_CONTENT)
+    
 
 
-class UpdateTransportStatusView(APIView):
-    """Admin: activate/deactivate/suspend a student's transport."""
-    permission_classes = [permissions.IsAdminUser]
-
-    def patch(self, request, pk):
-        try:
-            profile = StudentProfile.objects.get(pk=pk)
-        except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student profile not found.'}, status=404)
-        new_status = request.data.get('transport_status')
-        if new_status not in [c[0] for c in StudentProfile.TransportStatus.choices]:
-            return Response({'error': 'Invalid status.'}, status=400)
-        profile.transport_status = new_status
-        profile.save()
-        return Response(StudentProfileSerializer(profile).data)
-
-
-class LogoutView(APIView):
-    """Blacklist the refresh token on logout."""
-    def post(self, request):
-        try:
-            token = RefreshToken(request.data['refresh'])
-            token.blacklist()
-            return Response({'message': 'Logged out successfully.'})
-        except Exception:
-            return Response({'error': 'Invalid token.'}, status=400)

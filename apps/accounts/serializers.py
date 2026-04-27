@@ -13,17 +13,6 @@ class UserSerializer(serializers.ModelSerializer):
         model  = User
         fields = '__all__'
 
-
-class StudentProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = StudentProfile
-        fields = [
-            'id', 'admission_number', 'student_id', 'faculty',
-            'year_of_study', 'transport_status', 'wallet_balance', 'registered_at'
-        ]
-        read_only_fields = ['wallet_balance', 'transport_status', 'registered_at']
-
-
 class StudentSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True) 
 
@@ -34,11 +23,11 @@ class StudentSerializer(serializers.ModelSerializer):
 class DriverProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriverProfile
-        fields = ['id', 'license_number', 'license_expiry', 'is_on_duty']
+        fields = '__all__'
 
 
 class UserSerializer(serializers.ModelSerializer):
-    student_profile = StudentProfileSerializer(read_only=True)
+    student_profile = StudentSerializer(read_only=True)
     driver_profile = DriverProfileSerializer(read_only=True)
     full_name = serializers.SerializerMethodField()
 
