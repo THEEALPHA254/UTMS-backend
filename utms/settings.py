@@ -136,7 +136,17 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_CREDENTIALS = True
 
+#celery
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = "gracemuriithi204@gmail.com"
+EMAIL_HOST_PASSWORD = "wsrk qzlh emkz bnhy"
+DEFAULT_FROM_EMAIL = "gracemuriithi204@gmail.com"  # ✅ only once
 
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"  # ✅ add this too
 
 # Channels (WebSocket for real-time tracking)
 CHANNEL_LAYERS = {
@@ -148,9 +158,6 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Celery
-CELERY_BROKER_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
-CELERY_RESULT_BACKEND = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
 
 # MPesa (Daraja API)
 MPESA_CONSUMER_KEY = config('MPESA_CONSUMER_KEY', default='')
