@@ -45,6 +45,7 @@ class TripSerializer(serializers.ModelSerializer):
 
 class BookingSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
+    student_detail = serializers.SerializerMethodField()
     trip_detail = TripSerializer(source='trip', read_only=True)
     booked_by_name = serializers.SerializerMethodField()
 
@@ -59,16 +60,37 @@ class BookingSerializer(serializers.ModelSerializer):
     def get_booked_by_name(self, obj):
         return obj.booked_by.get_full_name() if obj.booked_by else None
 
+    def get_student_detail(self, obj):
+        """Returns student info needed by driver's passenger list."""
+        user = obj.student
+        profile = getattr(user, 'student_profile', None)
+        return {
+            'id': user.id,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'email': user.email,
+            'phone_number': user.phone_number,
+            'student_profile': {
+                'admission_number': profile.admission_number if profile else '',
+                'student_id': profile.student_id if profile else '',
+                'faculty': profile.faculty if profile else '',
+            } if profile else None,
+        }
+
 
 class CreateBookingSerializer(serializers.Serializer):
     trip_id = serializers.IntegerField()
-    student_admission = serializers.CharField(required=False)  # for paying on behalf
+    student_admission = serializers.CharField(required=False)  # pay on behalf
+    payment_method = serializers.ChoiceField(
+        choices=['wallet', 'mpesa'], default='wallet'
+    )
+    phone_number = serializers.CharField(required=False, allow_blank=True)
 
     def validate_trip_id(self, value):
         try:
             trip = Trip.objects.get(pk=value, status=Trip.Status.SCHEDULED)
         except Trip.DoesNotExist:
-            raise serializers.ValidationError("Trip not found or not available for booking.")
+            raise serializers.ValidationError("Trip not found or not available.")
         if trip.available_seats <= 0:
             raise serializers.ValidationError("No available seats on this trip.")
         return value

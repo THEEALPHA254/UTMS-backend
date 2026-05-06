@@ -10,11 +10,15 @@ router.register('trips', views.TripViewSet, basename='trip')
 
 urlpatterns = [
     path('', include(router.urls)),
-    # Bookings
+    # Student bookings
     path('bookings/', views.MyBookingsView.as_view(), name='my-bookings'),
     path('bookings/create/', views.CreateBookingView.as_view(), name='create-booking'),
+    # Admin/staff bookings
     path('bookings/all/', views.AllBookingsView.as_view(), name='all-bookings'),
+    # Driver: scan QR to board student
     path('bookings/board/', views.MarkBoardedView.as_view(), name='mark-boarded'),
-    # Driver GPS
+    # Driver: list passengers for a trip  (?trip=<id>)
+    path('bookings/passengers/', views.TripPassengersView.as_view(), name='trip-passengers'),
+    # Driver: push GPS
     path('location/push/', views.PushBusLocationView.as_view(), name='push-location'),
 ]
