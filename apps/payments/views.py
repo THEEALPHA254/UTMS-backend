@@ -6,6 +6,7 @@ from django.utils import timezone
 from .models import Transaction
 from .mpesa import stk_push
 from apps.accounts.models import StudentProfile
+from apps.accounts.permissions import IsStaffOrAdmin
 from apps.notifications.utils import send_notification
 import logging
 
@@ -61,7 +62,7 @@ class MyTransactionsView(generics.ListAPIView):
 class AllTransactionsView(generics.ListAPIView):
     """Admin/Staff: view all transactions."""
     serializer_class = TxnSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsStaffOrAdmin]
     queryset = Transaction.objects.select_related('user').all()
     filterset_fields = ['status', 'transaction_type', 'payment_method']
     search_fields = ['user__email', 'reference', 'external_ref']

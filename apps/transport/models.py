@@ -9,6 +9,7 @@ class Route(models.Model):
     destination = models.CharField(max_length=200)
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     fare = models.DecimalField(max_digits=8, decimal_places=2)
+    stops = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -20,9 +21,11 @@ class Route(models.Model):
         return f"{self.origin} → {self.destination}"
 
 
+
 class Bus(models.Model):
     class Status(models.TextChoices):
         ACTIVE = 'active', 'Active'
+        INACTIVE = 'inactive', 'Inactive'
         MAINTENANCE = 'maintenance', 'Under Maintenance'
         RETIRED = 'retired', 'Retired'
 
@@ -31,6 +34,7 @@ class Bus(models.Model):
     capacity = models.PositiveIntegerField()
     model = models.CharField(max_length=100, blank=True)
     year = models.PositiveSmallIntegerField(null=True, blank=True)
+    description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     assigned_route = models.ForeignKey(
         Route, on_delete=models.SET_NULL, null=True, blank=True, related_name='buses'
