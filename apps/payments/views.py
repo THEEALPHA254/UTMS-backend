@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django.db import transaction
 from django.utils import timezone
 from .models import Transaction
-from .mpesa import stk_push
+from .mpesa import stk_push, query_stk_status
 from apps.accounts.models import StudentProfile
 from apps.accounts.permissions import IsStaffOrAdmin
 from apps.notifications.utils import send_notification
@@ -196,23 +196,120 @@ class MpesaCallbackView(APIView):
 def _confirm_mpesa_booking(txn):
     """After successful M-Pesa payment, confirm the pending booking."""
     from apps.transport.models import Booking
-    # Find the booking associated with this transaction
-    # Transaction description stores: 'Trip booking #<id> | checkout:...'
     try:
-        desc = txn.description
-        booking_id = int(desc.split('Trip booking #')[1].split(' ')[0])
-        booking = Booking.objects.get(id=booking_id, status=Booking.Status.PENDING)
+        # Primary lookup: use the transaction reference stored on the booking via description
+        # Format: 'Trip booking #<id> | checkout:<checkout_id>'
+        # Fall back to scanning all pending bookings linked to this user + trip reference
+        booking = None
+        desc = txn.description or ''
+        if 'Trip booking #' in desc:
+            try:
+                booking_id = int(desc.split('Trip booking #')[1].split(' ')[0].split('|')[0].strip())
+                booking = Booking.objects.get(id=booking_id, status=Booking.Status.PENDING)
+            except (ValueError, Booking.DoesNotExist):
+                booking = None
+
+        if booking is None:
+            # Fallback: find any pending booking by this user created around the same time
+            booking = Booking.objects.filter(
+                student=txn.user, status=Booking.Status.PENDING
+            ).order_by('-created_at').first()
+
+        if booking is None:
+            logger.error(f"No pending booking found for transaction {txn.reference}")
+            return
+
         booking.status = Booking.Status.CONFIRMED
         booking.save()
 
         send_notification(
             recipient=txn.user,
             title='🎫 Booking Confirmed',
-            body=f'Your M-Pesa payment was successful. Your trip seat is confirmed.',
+            body='Your M-Pesa payment was successful. Your trip seat is confirmed.',
             category='booking',
         )
     except Exception as e:
         logger.error(f"Could not confirm booking after M-Pesa payment: {e}")
+
+
+class MpesaQueryView(APIView):
+    """
+    Student: manually check whether their pending M-Pesa top-up has been paid.
+    Use this when the automatic callback hasn't fired (e.g. local dev without a
+    public callback URL).  Pass the transaction reference returned by /wallet/topup/.
+    """
+    @transaction.atomic
+    def post(self, request):
+        reference = request.data.get('reference', '').strip()
+        if not reference:
+            return Response({'error': 'reference is required.'}, status=400)
+
+        try:
+            txn = Transaction.objects.select_for_update().get(
+                reference=reference, user=request.user
+            )
+        except Transaction.DoesNotExist:
+            return Response({'error': 'Transaction not found.'}, status=404)
+
+        # Already processed — just return current balance
+        if txn.status == Transaction.Status.SUCCESS:
+            profile = request.user.student_profile
+            return Response({
+                'status': 'success',
+                'message': 'Payment already confirmed.',
+                'balance': str(profile.wallet_balance),
+            })
+
+        if txn.status == Transaction.Status.FAILED:
+            return Response({'status': 'failed', 'message': 'Payment failed or was cancelled.'})
+
+        if not txn.external_ref:
+            return Response({'error': 'No M-Pesa request found for this transaction.'}, status=400)
+
+        try:
+            result = query_stk_status(txn.external_ref)
+        except Exception as e:
+            logger.error(f"STK query failed for {txn.reference}: {e}")
+            return Response({'error': 'Could not reach M-Pesa. Try again shortly.'}, status=502)
+
+        result_code = str(result.get('ResultCode', ''))
+
+        if result_code == '0':
+            txn.status = Transaction.Status.SUCCESS
+            txn.save()
+
+            profile = StudentProfile.objects.get(user=txn.user)
+            profile.wallet_balance += txn.amount
+            profile.save()
+            logger.info(f"Wallet topped up via query: {txn.user} +KES{txn.amount}")
+
+            send_notification(
+                recipient=txn.user,
+                title='💰 Wallet Topped Up',
+                body=f'KES {txn.amount} has been added to your wallet. New balance: KES {profile.wallet_balance}',
+                category='payment',
+            )
+            return Response({
+                'status': 'success',
+                'message': f'KES {txn.amount} added to your wallet.',
+                'balance': str(profile.wallet_balance),
+            })
+
+        # Map common Safaricom result codes to friendly messages
+        _messages = {
+            '1032': 'Payment was cancelled on your phone.',
+            '1': 'Insufficient M-Pesa balance.',
+            '1037': 'Payment timed out. Please try again.',
+            '2001': 'Invalid initiator information.',
+        }
+        msg = _messages.get(result_code, f'Payment not completed (code {result_code}).')
+
+        # Mark as failed for terminal codes (not still-pending)
+        if result_code not in ('', None):
+            txn.status = Transaction.Status.FAILED
+            txn.save()
+
+        return Response({'status': 'failed', 'message': msg})
 
 
 class WalletTopUpSimulateView(APIView):

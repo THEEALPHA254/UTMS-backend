@@ -34,6 +34,7 @@ class DashboardSummaryView(APIView):
         total_drivers = User.objects.filter(role='driver').count()
 
         trips_today = Trip.objects.filter(date=today).count()
+        trips_today_completed = Trip.objects.filter(date=today, status='completed').count()
         trips_this_month = Trip.objects.filter(date__gte=month_start).count()
         active_trips = Trip.objects.filter(status='in_progress').count()
 
@@ -65,12 +66,15 @@ class DashboardSummaryView(APIView):
             },
             'trips': {
                 'today': trips_today,
+                'today_total': trips_today,
+                'today_completed': trips_today_completed,
                 'this_month': trips_this_month,
                 'active_now': active_trips,
             },
             'bookings': {
                 'today': bookings_today,
             },
+            'bookings_today': bookings_today,
             'revenue': {
                 'today': float(revenue_today),
                 'this_month': float(revenue_month),
@@ -84,16 +88,21 @@ class RevenueReportView(APIView):
     permission_classes = [IsAdminOrStaff]
 
     def get(self, request):
-        # Last 6 months
+        # Last 6 calendar months using proper month arithmetic
         months = []
         today = timezone.now().date()
         for i in range(5, -1, -1):
-            d = today.replace(day=1) - timedelta(days=i * 28)
-            month_start = d.replace(day=1)
-            if d.month == 12:
-                month_end = d.replace(year=d.year + 1, month=1, day=1)
+            # Subtract i months from the current month
+            year = today.year
+            month = today.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+            month_start = today.replace(year=year, month=month, day=1)
+            if month == 12:
+                month_end = month_start.replace(year=year + 1, month=1, day=1)
             else:
-                month_end = d.replace(month=d.month + 1, day=1)
+                month_end = month_start.replace(month=month + 1, day=1)
 
             revenue = Transaction.objects.filter(
                 status='success',

@@ -104,12 +104,7 @@ class TripViewSet(viewsets.ModelViewSet):
         trip = self.get_object()
         user = request.user
 
-        # Drivers can only manage trips on their assigned bus
-        if user.role == 'driver':
-            driver_profile = getattr(user, 'driver_profile', None)
-            bus = getattr(driver_profile, None, None)
-            # Allow driver to update any in-progress or scheduled trip for now
-            # In production, filter by assigned bus
+        # Drivers can update any trip for now; bus assignment filtering can be added later
 
         new_status = request.data.get('status')
         valid_statuses = [c[0] for c in Trip.Status.choices]

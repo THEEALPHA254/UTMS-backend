@@ -76,3 +76,35 @@ def stk_push(phone_number: str, amount: float, account_reference: str, descripti
     )
     response.raise_for_status()
     return response.json()
+
+
+def query_stk_status(checkout_request_id: str) -> dict:
+    """
+    Query the status of an STK push transaction.
+    Returns the API response dict. ResultCode '0' means payment was successful.
+    """
+    base_url = (
+        'https://sandbox.safaricom.co.ke'
+        if settings.MPESA_ENV == 'sandbox'
+        else 'https://api.safaricom.co.ke'
+    )
+    token = get_mpesa_token()
+    password, timestamp = generate_password()
+
+    payload = {
+        "BusinessShortCode": settings.MPESA_SHORTCODE,
+        "Password": password,
+        "Timestamp": timestamp,
+        "CheckoutRequestID": checkout_request_id,
+    }
+    response = requests.post(
+        f"{base_url}/mpesa/stkpushquery/v1/query",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()

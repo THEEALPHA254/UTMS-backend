@@ -28,12 +28,6 @@ class MyNotificationsView(generics.ListAPIView):
 class MarkReadView(APIView):
     """Mark a single notification as read."""
     def post(self, request, pk):
-        # pk=-1 is a sentinel used by mobile app to mark all read
-        if str(pk) == '-1':
-            Notification.objects.filter(
-                recipient=request.user, is_read=False
-            ).update(is_read=True)
-            return Response({'status': 'all marked read'})
         try:
             notif = Notification.objects.get(pk=pk, recipient=request.user)
             notif.is_read = True

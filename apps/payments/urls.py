@@ -10,6 +10,7 @@ urlpatterns = [
     path('wallet/simulate-topup/', views.WalletTopUpSimulateView.as_view(), name='wallet-simulate'),
     # Admin
     path('all/', views.AllTransactionsView.as_view(), name='all-transactions'),
-    # M-Pesa callback (called by Safaricom)
+    # M-Pesa callback (called by Safaricom) + manual query for local dev
     path('mpesa/callback/', views.MpesaCallbackView.as_view(), name='mpesa-callback'),
+    path('mpesa/query/', views.MpesaQueryView.as_view(), name='mpesa-query'),
 ]
