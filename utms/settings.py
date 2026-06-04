@@ -20,7 +20,6 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'rest_framework_simplejwt',
-    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_filters',
     'drf_spectacular',
@@ -124,7 +123,7 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    'BLACKLIST_AFTER_ROTATION': False,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
@@ -148,7 +147,14 @@ EMAIL_HOST_PASSWORD = "wsrk qzlh emkz bnhy"
 DEFAULT_FROM_EMAIL = "gracemuriithi204@gmail.com"  # ✅ only once
 
 CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/0"  # ✅ add this too
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+
+CELERY_BEAT_SCHEDULE = {
+    'auto-refund-no-shows': {
+        'task': 'apps.transport.tasks.auto_refund_no_shows',
+        'schedule': 3600.0,  # every hour
+    },
+}
 
 # Channels (WebSocket for real-time tracking)
 CHANNEL_LAYERS = {

@@ -12,11 +12,13 @@ urlpatterns = [
     path("students/", student_list,   name="student-list"),
     path("students/create/", create_student, name="student-create"),
     path("students/<int:pk>/", student_detail, name="student-detail"),
+    path("students/<int:pk>/full/", student_full_detail, name="student-full-detail"),
 
     # ── Drivers (staff/admin, web) ────────────────────────────────────────────
     path("drivers/", driver_list,   name="driver-list"),
     path("drivers/create/", create_driver, name="driver-create"),
     path("drivers/<int:pk>/", driver_detail, name="driver-detail"),
+    path("drivers/<int:pk>/full/", driver_full_detail, name="driver-full-detail"),
 
     # ── Staff management (admin only, web) ────────────────────────────────────
     path("staff/", staff_list,   name="staff-list"),
@@ -26,4 +28,8 @@ urlpatterns = [
     # ── Mobile self-registration ──────────────────────────────────────────────
     path("register/student/", register_student, name="register-student"),
     path("register/driver/",  register_driver,  name="register-driver"),
+
+    # ── Password reset ────────────────────────────────────────────────────────
+    path("forgot-password/", forgot_password, name="forgot-password"),
+    path("reset-password/",  reset_password,  name="reset-password"),
 ]

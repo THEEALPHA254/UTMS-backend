@@ -60,7 +60,6 @@ class StudentProfile(models.Model):
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     admission_number = models.CharField(max_length=50, unique=True)
-    student_id = models.CharField(max_length=50, unique=True)
     faculty = models.CharField(max_length=100, blank=True)
     year_of_study = models.PositiveSmallIntegerField(default=1)
     transport_status = models.CharField(
@@ -89,3 +88,17 @@ class DriverProfile(models.Model):
 
     def __str__(self):
         return f"Driver: {self.user.get_full_name()}"
+
+
+class PasswordResetOTP(models.Model):
+    email = models.EmailField()
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def is_valid(self):
+        from datetime import timedelta
+        return not self.used and (timezone.now() - self.created_at) < timedelta(minutes=10)

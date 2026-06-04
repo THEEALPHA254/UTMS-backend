@@ -22,17 +22,32 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudentProfile
         fields = [
-            "id", "admission_number", "student_id", "faculty",
+            "id", "admission_number", "faculty",
             "year_of_study", "transport_status", "wallet_balance", "registered_at",
         ]
         read_only_fields = ["wallet_balance", "registered_at"]
 
 
 class DriverProfileSerializer(serializers.ModelSerializer):
+    assigned_vehicle = serializers.SerializerMethodField()
+
     class Meta:
         model = DriverProfile
-        fields = ["id", "license_number", "license_expiry", "is_on_duty"]
+        fields = ["id", "license_number", "license_expiry", "is_on_duty", "assigned_vehicle"]
         read_only_fields = ["is_on_duty"]
+
+    def get_assigned_vehicle(self, obj):
+        bus = obj.user.assigned_buses.filter(
+            status__in=['active', 'inactive', 'maintenance']
+        ).select_related('assigned_route').first()
+        if not bus:
+            return None
+        return {
+            "id": bus.id,
+            "bus_number": bus.bus_number,
+            "plate_number": bus.plate_number,
+            "status": bus.status,
+        }
 
 
 # ── Shared user read serializer ───────────────────────────────────────────────
@@ -60,6 +75,14 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.get_full_name()
 
 
+class DriverUserSerializer(UserSerializer):
+    """UserSerializer variant that always includes driver_profile with vehicle info."""
+    driver_profile = DriverProfileSerializer(read_only=True)
+
+    class Meta(UserSerializer.Meta):
+        pass
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 class LoginSerializer(serializers.Serializer):
@@ -81,7 +104,6 @@ class CreateStudentSerializer(serializers.Serializer):
 
     # Profile fields
     admission_number = serializers.CharField(max_length=50)
-    student_id       = serializers.CharField(max_length=50)
     faculty          = serializers.CharField(max_length=100, required=False, allow_blank=True)
     year_of_study    = serializers.IntegerField(default=1, min_value=1, max_value=10)
 
@@ -95,15 +117,9 @@ class CreateStudentSerializer(serializers.Serializer):
             raise serializers.ValidationError("Admission number already registered.")
         return value
 
-    def validate_student_id(self, value):
-        if StudentProfile.objects.filter(student_id=value).exists():
-            raise serializers.ValidationError("Student ID already registered.")
-        return value
-
     def create(self, validated_data):
         profile_fields = {
             "admission_number": validated_data.pop("admission_number"),
-            "student_id":       validated_data.pop("student_id"),
             "faculty":          validated_data.pop("faculty", ""),
             "year_of_study":    validated_data.pop("year_of_study", 1),
         }
@@ -208,7 +224,6 @@ class RegisterStudentSerializer(serializers.Serializer):
     last_name        = serializers.CharField(max_length=100)
     phone_number     = serializers.CharField(max_length=20, required=False, allow_blank=True)
     admission_number = serializers.CharField(max_length=50)
-    student_id       = serializers.CharField(max_length=50)
     faculty          = serializers.CharField(max_length=100, required=False, allow_blank=True)
     year_of_study    = serializers.IntegerField(default=1, min_value=1, max_value=10)
 
@@ -222,15 +237,9 @@ class RegisterStudentSerializer(serializers.Serializer):
             raise serializers.ValidationError("Admission number already registered.")
         return value
 
-    def validate_student_id(self, value):
-        if StudentProfile.objects.filter(student_id=value).exists():
-            raise serializers.ValidationError("Student ID already registered.")
-        return value
-
     def create(self, validated_data):
         profile_fields = {
             "admission_number": validated_data.pop("admission_number"),
-            "student_id":       validated_data.pop("student_id"),
             "faculty":          validated_data.pop("faculty", ""),
             "year_of_study":    validated_data.pop("year_of_study", 1),
         }

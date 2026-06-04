@@ -32,9 +32,23 @@ class IsDriver(permissions.BasePermission):
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 class RouteViewSet(viewsets.ModelViewSet):
-    queryset = Route.objects.filter(is_active=True)
     serializer_class = RouteSerializer
     search_fields = ['name', 'origin', 'destination']
+
+    def get_queryset(self):
+        from django.db.models import Q
+        qs = Route.objects.all()
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None and is_active != '':
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(origin__icontains=search) |
+                Q(destination__icontains=search)
+            )
+        return qs
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:

@@ -1,7 +1,11 @@
+import csv
 from rest_framework import generics, status, permissions
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db import transaction
+from django.db.models import Q
+from django.http import HttpResponse
 from django.utils import timezone
 from .models import Transaction
 from .mpesa import stk_push, query_stk_status
@@ -28,23 +32,48 @@ class TxnSerializer(drf_serializers.ModelSerializer):
     status_display = drf_serializers.CharField(
         source='get_status_display', read_only=True
     )
+    student_admission = drf_serializers.SerializerMethodField()
+    student_name = drf_serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
         fields = '__all__'
 
+    def get_student_admission(self, obj):
+        try:
+            return obj.user.student_profile.admission_number
+        except Exception:
+            return None
+
+    def get_student_name(self, obj):
+        return obj.user.get_full_name()
+
 
 class TopUpWalletSerializer(drf_serializers.Serializer):
     amount = drf_serializers.DecimalField(max_digits=10, decimal_places=2, min_value=10)
-    payment_method = drf_serializers.ChoiceField(choices=['mpesa', 'card'])
+    payment_method = drf_serializers.ChoiceField(choices=['mpesa'])
     phone_number = drf_serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, data):
-        if data['payment_method'] == 'mpesa' and not data.get('phone_number'):
+        if not data.get('phone_number'):
             raise drf_serializers.ValidationError(
                 {'phone_number': 'Phone number is required for M-Pesa.'}
             )
         return data
+
+
+class TxnPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+    def get_paginated_response(self, data):
+        return Response({
+            'count': self.page.paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'results': data,
+        })
 
 
 # ── Views ─────────────────────────────────────────────────────────────────────
@@ -59,13 +88,67 @@ class MyTransactionsView(generics.ListAPIView):
         ).order_by('-created_at')
 
 
-class AllTransactionsView(generics.ListAPIView):
-    """Admin/Staff: view all transactions."""
-    serializer_class = TxnSerializer
+class AllTransactionsView(APIView):
+    """Admin/Staff: view all transactions with filtering, pagination, and CSV export."""
     permission_classes = [IsStaffOrAdmin]
-    queryset = Transaction.objects.select_related('user').all()
-    filterset_fields = ['status', 'transaction_type', 'payment_method']
-    search_fields = ['user__email', 'reference', 'external_ref']
+
+    def get(self, request):
+        qs = Transaction.objects.select_related('user__student_profile').order_by('-created_at')
+
+        payment_method = request.query_params.get('payment_method')
+        if payment_method:
+            qs = qs.filter(payment_method=payment_method)
+
+        txn_status = request.query_params.get('status')
+        if txn_status:
+            qs = qs.filter(status=txn_status)
+
+        txn_type = request.query_params.get('transaction_type')
+        if txn_type:
+            qs = qs.filter(transaction_type=txn_type)
+
+        search = request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                Q(user__email__icontains=search) |
+                Q(reference__icontains=search) |
+                Q(user__student_profile__admission_number__icontains=search)
+            )
+
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+
+        # CSV export
+        if request.query_params.get('format') == 'csv' or request.query_params.get('export') == 'csv':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="payments.csv"'
+            writer = csv.writer(response)
+            writer.writerow(['Reference', 'Admission No', 'Student Name', 'Method', 'Type', 'Amount', 'Status', 'Date'])
+            for t in qs:
+                try:
+                    admission = t.user.student_profile.admission_number
+                except Exception:
+                    admission = ''
+                writer.writerow([
+                    t.reference,
+                    admission,
+                    t.user.get_full_name(),
+                    t.payment_method,
+                    t.transaction_type,
+                    t.amount,
+                    t.status,
+                    t.created_at.strftime('%Y-%m-%d %H:%M'),
+                ])
+            return response
+
+        paginator = TxnPagination()
+        page = paginator.paginate_queryset(qs, request)
+        serializer = TxnSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class WalletBalanceView(APIView):
@@ -83,55 +166,43 @@ class WalletBalanceView(APIView):
 
 
 class InitiateWalletTopUpView(APIView):
-    """
-    Student initiates a wallet top-up.
-    - M-Pesa: triggers STK Push.
-    - Card: placeholder for Stripe/Flutterwave.
-    """
+    """Student initiates a wallet top-up via M-Pesa STK Push."""
     @transaction.atomic
     def post(self, request):
         serializer = TopUpWalletSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        phone = data.get('phone_number') or request.user.phone_number
         txn = Transaction.objects.create(
             user=request.user,
             transaction_type=Transaction.TransactionType.WALLET_TOPUP,
-            payment_method=data['payment_method'],
+            payment_method=Transaction.PaymentMethod.MPESA,
             amount=data['amount'],
             status=Transaction.Status.PENDING,
-            phone_number=data.get('phone_number', ''),
+            phone_number=phone,
             description=f"Wallet top-up of KES {data['amount']}",
         )
 
-        if data['payment_method'] == 'mpesa':
-            phone = data.get('phone_number') or request.user.phone_number
-            try:
-                result = stk_push(
-                    phone_number=phone,
-                    amount=float(data['amount']),
-                    account_reference=txn.reference,
-                    description="UTMS Wallet Top-Up",
-                )
-                txn.external_ref = result.get('CheckoutRequestID', '')
-                txn.save()
-                return Response({
-                    'message': 'STK Push sent. Complete payment on your phone.',
-                    'reference': txn.reference,
-                    'checkout_request_id': txn.external_ref,
-                })
-            except Exception as e:
-                txn.status = Transaction.Status.FAILED
-                txn.save()
-                logger.error(f"MPesa STK Push failed: {e}")
-                return Response({'error': 'M-Pesa request failed. Try again.'}, status=502)
-
-        # Card
-        return Response({
-            'message': 'Transaction initiated.',
-            'reference': txn.reference,
-            'amount': str(data['amount']),
-        })
+        try:
+            result = stk_push(
+                phone_number=phone,
+                amount=float(data['amount']),
+                account_reference=txn.reference,
+                description="UTMS Wallet Top-Up",
+            )
+            txn.external_ref = result.get('CheckoutRequestID', '')
+            txn.save()
+            return Response({
+                'message': 'STK Push sent. Complete payment on your phone.',
+                'reference': txn.reference,
+                'checkout_request_id': txn.external_ref,
+            })
+        except Exception as e:
+            txn.status = Transaction.Status.FAILED
+            txn.save()
+            logger.error(f"MPesa STK Push failed: {e}")
+            return Response({'error': 'M-Pesa request failed. Try again.'}, status=502)
 
 
 class MpesaCallbackView(APIView):

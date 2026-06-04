@@ -5,7 +5,6 @@ from django.conf import settings
 class Transaction(models.Model):
     class PaymentMethod(models.TextChoices):
         MPESA = 'mpesa', 'M-Pesa'
-        CARD = 'card', 'Credit/Debit Card'
         WALLET = 'wallet', 'Wallet'
 
     class TransactionType(models.TextChoices):

@@ -9,7 +9,9 @@ from django.db.models import Q
 
 from .models import *
 from .serializers import *
+from .serializers import DriverUserSerializer
 from .permissions import *
+import random
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -63,6 +65,17 @@ def login_view(request):
 
     if not user.is_active:
         return fail("Account is deactivated.", status_code=status.HTTP_403_FORBIDDEN)
+
+    # Block suspended students from logging in
+    if user.role == User.Role.STUDENT:
+        try:
+            if user.student_profile.transport_status == StudentProfile.TransportStatus.SUSPENDED:
+                return fail(
+                    "Your account has been suspended. Contact administration.",
+                    status_code=status.HTTP_403_FORBIDDEN
+                )
+        except StudentProfile.DoesNotExist:
+            pass
 
     refresh = RefreshToken.for_user(user)
     return ok({
@@ -125,11 +138,17 @@ def student_detail(request, pk):
         return ok(UserSerializer(profile.user).data)
 
     if request.method == "PUT":
-        # Update profile fields only
         serializer = StudentProfileSerializer(profile, data=request.data, partial=True)
         if not serializer.is_valid():
             return fail("Update failed", serializer.errors)
         serializer.save()
+
+        user = profile.user
+        for field in ("first_name", "last_name", "phone_number"):
+            if field in request.data:
+                setattr(user, field, request.data[field])
+        user.save(update_fields=["first_name", "last_name", "phone_number"])
+
         return ok(UserSerializer(profile.user).data, "Student updated successfully")
 
     if request.method == "DELETE":
@@ -142,7 +161,7 @@ def student_detail(request, pk):
 @api_view(["GET"])
 @permission_classes([IsStaffOrAdmin])
 def driver_list(request):
-    """List all drivers. Staff/Admin only."""
+    """List all drivers with search, duty status, and active filters. Staff/Admin only."""
     qs = DriverProfile.objects.select_related("user").order_by("id")
 
     search = request.query_params.get("search")
@@ -153,9 +172,17 @@ def driver_list(request):
             Q(user__email__icontains=search)
         )
 
+    is_on_duty = request.query_params.get("is_on_duty")
+    if is_on_duty is not None and is_on_duty != '':
+        qs = qs.filter(is_on_duty=is_on_duty.lower() == "true")
+
+    is_active = request.query_params.get("is_active")
+    if is_active is not None and is_active != '':
+        qs = qs.filter(user__is_active=is_active.lower() == "true")
+
     paginator = Pagination()
     page = paginator.paginate_queryset(qs, request)
-    return paginator.get_paginated_response(UserSerializer([d.user for d in page], many=True).data)
+    return paginator.get_paginated_response(DriverUserSerializer([d.user for d in page], many=True).data)
 
 
 @api_view(["POST"])
@@ -185,7 +212,29 @@ def driver_detail(request, pk):
         if not serializer.is_valid():
             return fail("Update failed", serializer.errors)
         serializer.save()
-        return ok(UserSerializer(profile.user).data, "Driver updated successfully")
+
+        # Update basic user fields if provided
+        user = profile.user
+        for field in ("first_name", "last_name", "phone_number"):
+            if field in request.data:
+                setattr(user, field, request.data[field])
+        user.save(update_fields=["first_name", "last_name", "phone_number"])
+
+        # Assign or unassign bus
+        bus_id = request.data.get("bus")
+        if bus_id is not None:
+            from apps.transport.models import Bus
+            # Unassign this driver from any bus they currently drive
+            Bus.objects.filter(driver=user).update(driver=None)
+            if bus_id:
+                try:
+                    bus = Bus.objects.get(pk=bus_id)
+                    bus.driver = user
+                    bus.save(update_fields=["driver"])
+                except Bus.DoesNotExist:
+                    pass
+
+        return ok(DriverUserSerializer(profile.user).data, "Driver updated successfully")
 
     if request.method == "DELETE":
         profile.user.delete()
@@ -286,3 +335,196 @@ def register_driver(request):
         "access":  str(refresh.access_token),
         "refresh": str(refresh),
     }, "Driver registered successfully", status.HTTP_201_CREATED)
+
+
+# ── Student full profile (web detail view) ────────────────────────────────────
+
+@api_view(["GET"])
+@permission_classes([IsStaffOrAdmin])
+def student_full_detail(request, pk):
+    """Returns full student info including bookings and wallet transactions."""
+    try:
+        profile = StudentProfile.objects.select_related("user").get(pk=pk)
+    except StudentProfile.DoesNotExist:
+        return fail("Student not found", status_code=status.HTTP_404_NOT_FOUND)
+
+    from apps.transport.models import Booking
+    from apps.payments.models import Transaction
+
+    bookings_qs = Booking.objects.filter(
+        student=profile.user
+    ).select_related('trip__schedule__route', 'trip__schedule__bus').order_by('-created_at')[:50]
+
+    bookings = []
+    for b in bookings_qs:
+        bookings.append({
+            "id": b.id,
+            "route": str(b.trip.schedule.route),
+            "date": b.trip.date,
+            "departure_time": b.trip.schedule.departure_time,
+            "status": b.status,
+            "boarded": b.boarded,
+            "amount_paid": float(b.amount_paid),
+        })
+
+    transactions_qs = Transaction.objects.filter(
+        user=profile.user
+    ).order_by('-created_at')[:50]
+
+    transactions = [
+        {
+            "id": t.id,
+            "reference": t.reference,
+            "type": t.transaction_type,
+            "method": t.payment_method,
+            "amount": float(t.amount),
+            "status": t.status,
+            "created_at": t.created_at,
+        }
+        for t in transactions_qs
+    ]
+
+    total_trips = bookings_qs.count()
+    total_spent = sum(b["amount_paid"] for b in bookings)
+
+    return ok({
+        **UserSerializer(profile.user).data,
+        "bookings": bookings,
+        "transactions": transactions,
+        "stats": {
+            "total_trips": total_trips,
+            "total_spent": total_spent,
+        },
+    })
+
+
+# ── Driver full profile (web detail view) ─────────────────────────────────────
+
+@api_view(["GET"])
+@permission_classes([IsStaffOrAdmin])
+def driver_full_detail(request, pk):
+    """Returns full driver info including trip history and stats."""
+    try:
+        profile = DriverProfile.objects.select_related("user").get(pk=pk)
+    except DriverProfile.DoesNotExist:
+        return fail("Driver not found", status_code=status.HTTP_404_NOT_FOUND)
+
+    from apps.transport.models import Trip
+
+    trips_qs = Trip.objects.filter(
+        schedule__bus__driver=profile.user
+    ).select_related('schedule__route', 'schedule__bus').order_by('-date')[:50]
+
+    trips = []
+    for t in trips_qs:
+        trips.append({
+            "id": t.id,
+            "route": str(t.schedule.route),
+            "date": t.date,
+            "departure_time": t.schedule.departure_time,
+            "arrival_time": t.schedule.arrival_time,
+            "status": t.status,
+            "passengers": t.seats_booked,
+        })
+
+    total_trips = trips_qs.count()
+    total_passengers = sum(t["passengers"] for t in trips)
+    avg_passengers = round(total_passengers / total_trips, 1) if total_trips else 0
+
+    bus = profile.user.assigned_buses.select_related('assigned_route').first()
+    vehicle_info = None
+    if bus:
+        vehicle_info = {
+            "id": bus.id,
+            "bus_number": bus.bus_number,
+            "plate_number": bus.plate_number,
+            "status": bus.status,
+        }
+
+    return ok({
+        **DriverUserSerializer(profile.user).data,
+        "trips": trips,
+        "stats": {
+            "total_trips": total_trips,
+            "total_passengers": total_passengers,
+            "avg_passengers_per_trip": avg_passengers,
+        },
+        "vehicle": vehicle_info,
+    })
+
+
+# ── Password Reset ─────────────────────────────────────────────────────────────
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([])
+def forgot_password(request):
+    email = request.data.get("email", "").strip().lower()
+    if not email:
+        return fail("Email is required.")
+
+    # Silently succeed even if email not found (no enumeration)
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return ok(message="If that email is registered, a reset code has been sent.")
+
+    # Invalidate any previous unused OTPs for this email
+    PasswordResetOTP.objects.filter(email=email, used=False).update(used=True)
+
+    otp = f"{random.randint(100000, 999999)}"
+    PasswordResetOTP.objects.create(email=email, otp=otp)
+
+    from django.core.mail import send_mail
+    send_mail(
+        subject="UTMS — Password Reset Code",
+        message=(
+            f"Hi {user.get_full_name()},\n\n"
+            f"Your password reset code is: {otp}\n\n"
+            f"This code expires in 10 minutes. If you did not request this, ignore this email.\n\n"
+            f"— UTMS Team"
+        ),
+        from_email=None,
+        recipient_list=[email],
+        fail_silently=True,
+    )
+
+    return ok(message="If that email is registered, a reset code has been sent.")
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([])
+def reset_password(request):
+    email = request.data.get("email", "").strip().lower()
+    otp = request.data.get("otp", "").strip()
+    new_password = request.data.get("new_password", "")
+
+    if not email or not otp or not new_password:
+        return fail("Email, OTP, and new password are required.")
+
+    if len(new_password) < 8:
+        return fail("Password must be at least 8 characters.")
+
+    try:
+        reset_obj = PasswordResetOTP.objects.filter(
+            email=email, otp=otp, used=False
+        ).latest('created_at')
+    except PasswordResetOTP.DoesNotExist:
+        return fail("Invalid or expired reset code.", status_code=status.HTTP_400_BAD_REQUEST)
+
+    if not reset_obj.is_valid():
+        return fail("Reset code has expired. Please request a new one.", status_code=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return fail("User not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+    user.set_password(new_password)
+    user.save()
+
+    reset_obj.used = True
+    reset_obj.save()
+
+    return ok(message="Password reset successfully. You can now log in.")

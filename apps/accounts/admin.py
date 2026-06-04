@@ -35,17 +35,16 @@ class UserAdmin(ImportExportModelAdmin, BaseUserAdmin):
 # ── StudentProfile ────────────────────────────────────────────────────────────
 @admin.register(StudentProfile)
 class StudentProfileAdmin(ImportExportModelAdmin):
-    list_display   = ('id', 'full_name', 'email', 'admission_number', 'student_id',
+    list_display   = ('id', 'full_name', 'email', 'admission_number',
                       'faculty', 'year_of_study', 'transport_status', 'wallet_balance', 'registered_at')
     list_filter    = ('transport_status', 'year_of_study', 'faculty')
-    search_fields  = ('user__first_name', 'user__last_name', 'user__email',
-                      'admission_number', 'student_id')
+    search_fields  = ('user__first_name', 'user__last_name', 'user__email', 'admission_number')
     ordering       = ('-id',)
     readonly_fields = ('registered_at',)
 
     fieldsets = (
         ('Linked Account', {'fields': ('user',)}),
-        ('Academic Info',  {'fields': ('admission_number', 'student_id', 'faculty', 'year_of_study')}),
+        ('Academic Info',  {'fields': ('admission_number', 'faculty', 'year_of_study')}),
         ('Transport',      {'fields': ('transport_status', 'wallet_balance')}),
         ('Timestamps',     {'fields': ('registered_at',), 'classes': ('collapse',)}),
     )

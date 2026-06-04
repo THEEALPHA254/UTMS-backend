@@ -72,7 +72,6 @@ class BookingSerializer(serializers.ModelSerializer):
             'phone_number': user.phone_number,
             'student_profile': {
                 'admission_number': profile.admission_number if profile else '',
-                'student_id': profile.student_id if profile else '',
                 'faculty': profile.faculty if profile else '',
             } if profile else None,
         }
