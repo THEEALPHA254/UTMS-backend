@@ -1,19 +1,42 @@
 # serializers.py
 import secrets
 import string
+from django.contrib.auth.password_validation import validate_password as django_validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from .models import *
+
+
+def _run_password_validators(password):
+    """Run AUTH_PASSWORD_VALIDATORS and re-raise as a DRF ValidationError."""
+    try:
+        django_validate_password(password)
+    except DjangoValidationError as e:
+        raise serializers.ValidationError(list(e.messages))
+    return password
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def generate_password(length: int = 12) -> str:
     """
-    Generate a secure random password.
-    In dev, you can override this to return a fixed string for easy testing.
+    Generate a secure random password that satisfies AUTH_PASSWORD_VALIDATORS
+    (at least one upper, one lower, one special).
     """
-    alphabet = string.ascii_letters + string.digits + "!@#$%"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    specials = "!@#$%"
+    alphabet = string.ascii_letters + string.digits + specials
+    required = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(specials),
+    ]
+    remaining = [secrets.choice(alphabet) for _ in range(max(length - len(required), 0))]
+    chars = required + remaining
+    # Shuffle so the required chars aren't always at the front.
+    for i in range(len(chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        chars[i], chars[j] = chars[j], chars[i]
+    return "".join(chars)
 
 
 # ── Shared profile serializers ────────────────────────────────────────────────
@@ -237,6 +260,9 @@ class RegisterStudentSerializer(serializers.Serializer):
             raise serializers.ValidationError("Admission number already registered.")
         return value
 
+    def validate_password(self, value):
+        return _run_password_validators(value)
+
     def create(self, validated_data):
         profile_fields = {
             "admission_number": validated_data.pop("admission_number"),
@@ -275,6 +301,9 @@ class RegisterDriverSerializer(serializers.Serializer):
             raise serializers.ValidationError("License number already registered.")
         return value
 
+    def validate_password(self, value):
+        return _run_password_validators(value)
+
     def create(self, validated_data):
         profile_fields = {
             "license_number": validated_data.pop("license_number"),
@@ -301,3 +330,6 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is incorrect.")
         return value
+
+    def validate_new_password(self, value):
+        return _run_password_validators(value)

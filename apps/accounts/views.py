@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 
 from .models import *
@@ -91,11 +93,11 @@ def login_view(request):
 @permission_classes([IsStaffOrAdmin])
 def student_list(request):
     """List all students with search + filter. Staff/Admin only."""
-    qs = StudentProfile.objects.select_related("user").order_by("id")
+    student = StudentProfile.objects.select_related("user").order_by("id")
 
     search = request.query_params.get("search")
     if search:
-        qs = qs.filter(
+        student = student.filter(
             Q(user__first_name__icontains=search) |
             Q(user__last_name__icontains=search)  |
             Q(user__email__icontains=search)       |
@@ -104,14 +106,14 @@ def student_list(request):
 
     transport_status = request.query_params.get("transport_status")
     if transport_status:
-        qs = qs.filter(transport_status=transport_status)
+        student = student.filter(transport_status=transport_status)
 
     is_active = request.query_params.get("is_active")
     if is_active is not None:
-        qs = qs.filter(user__is_active=is_active.lower() == "true")
+        student = student.filter(user__is_active=is_active.lower() == "true")
 
     paginator = Pagination()
-    page = paginator.paginate_queryset(qs, request)
+    page = paginator.paginate_queryset(student, request)
     return paginator.get_paginated_response(UserSerializer([s.user for s in page], many=True).data)
 
 
@@ -503,8 +505,10 @@ def reset_password(request):
     if not email or not otp or not new_password:
         return fail("Email, OTP, and new password are required.")
 
-    if len(new_password) < 8:
-        return fail("Password must be at least 8 characters.")
+    try:
+        validate_password(new_password)
+    except DjangoValidationError as e:
+        return fail(" ".join(e.messages))
 
     try:
         reset_obj = PasswordResetOTP.objects.filter(
